@@ -34,6 +34,7 @@ import org.opencron.server.dao.QueryDao;
 import org.opencron.server.domain.Job;
 import org.opencron.server.domain.User;
 import org.opencron.server.domain.Agent;
+import org.opencron.server.job.OpencronCollector;
 import org.opencron.server.job.OpencronTools;
 import org.opencron.server.tag.PageBean;
 
@@ -67,6 +68,9 @@ public class JobService {
     @Autowired
     private SchedulerService schedulerService;
 
+    @Autowired
+    private OpencronCollector opencronCollector;
+
     private Logger logger = LoggerFactory.getLogger(JobService.class);
 
     public Job getJob(Long jobId) {
@@ -84,8 +88,9 @@ public class JobService {
                 "ON T.agentId = D.agentId " +
                 "WHERE IFNULL(T.flowNum,0)=0 " +
                 "AND cronType=? " +
-                "AND execType = ? " +
-                "AND T.deleted=0";
+                "AND execType=? " +
+                "AND T.deleted=0 " +
+                "AND T.pause=0";
         List<JobVo> jobs = queryDao.sqlQuery(JobVo.class, sql, cronType.getType(), execType.getStatus());
         queryJobMore(jobs);
         return jobs;
@@ -99,6 +104,7 @@ public class JobService {
                 "AND cronType=? " +
                 "AND execType = ? " +
                 "AND T.deleted=0 " +
+                "AND T.pause=0" +
                 "AND D.agentId=? ";
 
         List<JobVo> jobs = queryDao.sqlQuery(JobVo.class, sql, cronType.getType(), execType.getStatus(), agent.getAgentId());
@@ -376,4 +382,56 @@ public class JobService {
         return OpencronTools.isPermission(session) || userId.equals(OpencronTools.getUserId(session));
     }
 
+    public boolean pauseJob(Job jobBean) {
+
+        Job job = this.getJob(jobBean.getJobId());
+
+        if (jobBean.getPause()==null) return false;
+
+        if ( job.getPause()!=null && jobBean.getPause().equals(job.getPause())) {
+            return false;
+        }
+
+        //必须是自动执行.
+        if ( !job.getExecType().equals(ExecType.AUTO.getStatus()) ) {
+            return false;
+        }
+
+        CronType cronType = CronType.getByType(job.getCronType());
+
+        switch (cronType) {
+            case QUARTZ:
+                try {
+                    if (jobBean.getPause()) {
+                        //暂停任务
+                        schedulerService.pause(jobBean.getJobId());
+                    }else {
+                        //恢复任务
+                        schedulerService.resume(jobBean.getJobId());
+                    }
+                    job.setPause(jobBean.getPause());
+                    merge(job);
+                    return true;
+                }catch (SchedulerException e) {
+                    logger.error("[opencron] pauseQuartzJob error:{}",e.getLocalizedMessage());
+                    return false;
+                }
+            case CRONTAB:
+                try {
+                    if (jobBean.getPause()) {
+                        opencronCollector.removeTask(jobBean.getJobId());
+                    }else {
+                        JobVo jobVo = getJobVoById(job.getJobId());
+                        opencronCollector.addTask(jobVo);
+                    }
+                    job.setPause(jobBean.getPause());
+                    merge(job);
+                    return true;
+                }catch (Exception e) {
+                    logger.error("[opencron] pauseCrontabJob error:{}",e.getLocalizedMessage());
+                    return false;
+                }
+        }
+        return true;
+    }
 }

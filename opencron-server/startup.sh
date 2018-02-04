@@ -8,28 +8,45 @@ GREEN_COLOR="\E[1;32m";
 YELLOW_COLOR="\E[1;33m";
 RES="\E[0m";
 
+printf "${GREEN_COLOR}\n"
+cat<<EOT
+
+      --------------------------------------------
+    /                                              \\
+   /   ___  _ __   ___ _ __   ___ _ __ ___  _ __    \\
+  /   / _ \| '_ \ / _ \ '_ \ / __| '__/ _ \| '_ \\    \\
+ /   | (_) | |_) |  __/ | | | (__| | | (_) | | | |    \\
+ \\    \___/| .__/ \___|_| |_|\___|_|  \___/|_| |_|    /
+  \\        |_|                                       /
+   \\                                                /
+    \\       --opencron,Let's crontab easy!         /
+      --------------------------------------------
+
+EOT
+printf "${RES}\n";
+
 echo_r () {
     # Color red: Error, Failed
     [ $# -ne 1 ] && return 1
-    printf "[${BLUE_COLOR}opencron${RES}] ${RED_COLOR}$1${RES}\n"
+    printf "[${GREEN_COLOR}opencron${RES}] ${RED_COLOR}$1${RES}\n"
 }
 
 echo_g () {
     # Color green: Success
     [ $# -ne 1 ] && return 1
-    printf "[${BLUE_COLOR}opencron${RES}] ${GREEN_COLOR}$1${RES}\n"
+    printf "[${GREEN_COLOR}opencron${RES}] ${GREEN_COLOR}$1${RES}\n"
 }
 
 echo_y () {
     # Color yellow: Warning
     [ $# -ne 1 ] && return 1
-    printf "[${BLUE_COLOR}opencron${RES}] ${YELLOW_COLOR}$1${RES}\n"
+    printf "[${GREEN_COLOR}opencron${RES}] ${YELLOW_COLOR}$1${RES}\n"
 }
 
 echo_w () {
     # Color yellow: White
     [ $# -ne 1 ] && return 1
-    printf "[${BLUE_COLOR}opencron${RES}] ${WHITE_COLOR}$1${RES}\n"
+    printf "[${GREEN_COLOR}opencron${RES}] ${WHITE_COLOR}$1${RES}\n"
 }
 
 # Make sure prerequisite environment variables are set
@@ -62,7 +79,7 @@ if [ -z "$JAVA_HOME" -a -z "$JRE_HOME" ]; then
   fi
 fi
 if [ -z "$JAVA_HOME" -a "$1" = "debug" ]; then
-  echo_r "JAVA_HOME should point to a JDK in order to run in debug mode."
+  echo "JAVA_HOME should point to a JDK in order to run in debug mode."
   exit 1
 fi
 if [ -z "$JRE_HOME" ]; then
@@ -148,42 +165,32 @@ WORKDIR=`cd "$PRGDIR" >/dev/null; pwd`;
 
 APP_ARTIFACT=opencron-server
 
-APP_VERSION="1.1.0-RELEASE";
+LIB_PATH="$WORKDIR"/WEB-INF/lib
 
-APP_WAR_NAME=${APP_ARTIFACT}.war
+LOG_PATH="$WORKDIR"/work/logs
 
-MAVEN_TARGET_WAR="${WORKDIR}"/${APP_ARTIFACT}/target/${APP_WAR_NAME}
-
-DIST_PATH=${WORKDIR}/dist/
-
-[ ! -d "${DIST_PATH}" ] && mkdir -p "${DIST_PATH}"
-
-DEPLOY_PATH=${WORKDIR}/dist/opencron-server
-
-STARTUP_SHELL=${WORKDIR}/${APP_ARTIFACT}/startup.sh
-
-#先检查dist下是否有war包
-if [ ! -f "${DIST_PATH}/${APP_WAR_NAME}" ] ; then
-    #dist下没有war包则检查server的target下是否有war包.
-   if [ ! -f "${MAVEN_TARGET_WAR}" ] ; then
-      echo_w "[opencron] please build project first!"
-      exit 0;
-   else
-      cp ${MAVEN_TARGET_WAR} ${DIST_PATH};
-   fi
+# Add jars to classpath
+if [ ! -z "$CLASSPATH" ] ; then
+  CLASSPATH="$CLASSPATH":
 fi
+CLASSPATH="$CLASSPATH""$WORKDIR"/WEB-INF/classes
 
-[ -d "${DEPLOY_PATH}" ] && rm -rf ${DEPLOY_PATH}/* || mkdir -p ${DEPLOY_PATH}
+for jar in ${LIB_PATH}/*
+do
+  CLASSPATH="$CLASSPATH":"$jar"
+done
 
-# unpackage war to dist
-cp ${DIST_PATH}/${APP_WAR_NAME} ${DEPLOY_PATH} && cd ${DEPLOY_PATH} && jar xvf ${APP_WAR_NAME} >/dev/null 2>&1 && rm -rf ${DEPLOY_PATH}/${APP_WAR_NAME}
+#start server....
+printf "[${BLUE_COLOR}opencron${RES}] ${WHITE_COLOR} server Starting.... ${RES}\n"
 
-#copy jars...
-cp -r ${WORKDIR}/${APP_ARTIFACT}/work ${DEPLOY_PATH}
+eval "\"$RUNJAVA\"" \
+        -classpath "\"$CLASSPATH\"" \
+        -Dserver.launcher=tomcat \
+        org.opencron.server.bootstrap.Startup $1 \
+        >/dev/null 2>&1 "&";
 
-#copy startup.sh
-cp  ${STARTUP_SHELL} ${DEPLOY_PATH}
+printf "[${BLUE_COLOR}opencron${RES}] ${WHITE_COLOR} please see log for more detail:${RES}${GREEN_COLOR} $LOG_PATH/opencron.out ${RES}\n"
 
-#startup
-/bin/bash +x "${DEPLOY_PATH}/startup.sh" "$@"
+exit $?
+
 

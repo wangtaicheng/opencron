@@ -8,7 +8,7 @@ GREEN_COLOR="\E[1;32m";
 YELLOW_COLOR="\E[1;33m";
 RES="\E[0m";
 
-echo -ne "${GREEN_COLOR}"
+printf "${GREEN_COLOR}\n"
 cat<<EOT
 
       --------------------------------------------
@@ -23,7 +23,118 @@ cat<<EOT
       --------------------------------------------
 
 EOT
-echo -ne "${RES}";
+printf "${RES}\n"
+
+echo_r () {
+    # Color red: Error, Failed
+    [ $# -ne 1 ] && return 1
+    printf "[${BLUE_COLOR}opencron${RES}] ${RED_COLOR}$1${RES}\n"
+}
+
+echo_g () {
+    # Color green: Success
+    [ $# -ne 1 ] && return 1
+    printf "[${BLUE_COLOR}opencron${RES}] ${GREEN_COLOR}$1${RES}\n"
+}
+
+echo_y () {
+    # Color yellow: Warning
+    [ $# -ne 1 ] && return 1
+    printf "[${BLUE_COLOR}opencron${RES}] ${YELLOW_COLOR}$1${RES}\n"
+}
+
+echo_w () {
+    # Color yellow: White
+    [ $# -ne 1 ] && return 1
+    printf "[${BLUE_COLOR}opencron${RES}] ${WHITE_COLOR}$1${RES}\n"
+}
+
+
+# Make sure prerequisite environment variables are set
+if [ -z "$JAVA_HOME" -a -z "$JRE_HOME" ]; then
+  if $darwin; then
+    # Bugzilla 54390
+    if [ -x '/usr/libexec/java_home' ] ; then
+      export JAVA_HOME=`/usr/libexec/java_home`
+    # Bugzilla 37284 (reviewed).
+    elif [ -d "/System/Library/Frameworks/JavaVM.framework/Versions/CurrentJDK/Home" ]; then
+      export JAVA_HOME="/System/Library/Frameworks/JavaVM.framework/Versions/CurrentJDK/Home"
+    fi
+  else
+    JAVA_PATH=`which java 2>/dev/null`
+    if [ "x$JAVA_PATH" != "x" ]; then
+      JAVA_PATH=`dirname $JAVA_PATH 2>/dev/null`
+      JRE_HOME=`dirname $JAVA_PATH 2>/dev/null`
+    fi
+    if [ "x$JRE_HOME" = "x" ]; then
+      # XXX: Should we try other locations?
+      if [ -x /usr/bin/java ]; then
+        JRE_HOME=/usr
+      fi
+    fi
+  fi
+  if [ -z "$JAVA_HOME" -a -z "$JRE_HOME" ]; then
+    echo_r "Neither the JAVA_HOME nor the JRE_HOME environment variable is defined"
+    echo_r "At least one of these environment variable is needed to run this program"
+    exit 1
+  fi
+fi
+if [ -z "$JAVA_HOME" -a "$1" = "debug" ]; then
+  echo_r "JAVA_HOME should point to a JDK in order to run in debug mode."
+  exit 1
+fi
+if [ -z "$JRE_HOME" ]; then
+  JRE_HOME="$JAVA_HOME"
+fi
+
+# If we're running under jdb, we need a full jdk.
+if [ "$1" = "debug" ] ; then
+  if [ "$os400" = "true" ]; then
+    if [ ! -x "$JAVA_HOME"/bin/java -o ! -x "$JAVA_HOME"/bin/javac ]; then
+      echo_r "The JAVA_HOME environment variable is not defined correctly"
+      echo_r "This environment variable is needed to run this program"
+      echo_r "NB: JAVA_HOME should point to a JDK not a JRE"
+      exit 1
+    fi
+  else
+    if [ ! -x "$JAVA_HOME"/bin/java -o ! -x "$JAVA_HOME"/bin/jdb -o ! -x "$JAVA_HOME"/bin/javac ]; then
+      echo_r "The JAVA_HOME environment variable is not defined correctly"
+      echo_r "This environment variable is needed to run this program"
+      echo_r "NB: JAVA_HOME should point to a JDK not a JRE"
+      exit 1
+    fi
+  fi
+fi
+
+# Don't override the endorsed dir if the user has set it previously
+if [ -z "$JAVA_ENDORSED_DIRS" ]; then
+  # Set the default -Djava.endorsed.dirs argument
+  JAVA_ENDORSED_DIRS="$OPENCRON_HOME"/endorsed
+fi
+
+# Set standard commands for invoking Java, if not already set.
+if [ -z "$RUNJAVA" ]; then
+  RUNJAVA="$JRE_HOME"/bin/java
+fi
+if [ "$os400" != "true" ]; then
+  if [ -z "$_RUNJDB" ]; then
+    _RUNJDB="$JAVA_HOME"/bin/jdb
+  fi
+fi
+
+#check java exists.
+$RUNJAVA >/dev/null 2>&1
+
+if [ $? -ne 1 ];then
+  echo_r "ERROR: java is not install,please install java first!"
+  exit 1;
+fi
+
+#check openjdk
+if [ "`${RUNJAVA} -version 2>&1 | head -1|grep "openjdk"|wc -l`"x == "1"x ]; then
+  echo_r "ERROR: please uninstall OpenJDK and install jdk first"
+  exit 1;
+fi
 
 # OS specific support.  $var _must_ be set to either true or false.
 cygwin=false
@@ -48,10 +159,11 @@ while [ -h "$PRG" ]; do
   fi
 done
 
+
 # Get standard environment variables
 PRGDIR=`dirname "$PRG"`
 
-WORKDIR="`readlink -f ${PRGDIR}`"
+WORKDIR=`cd "$PRGDIR" >/dev/null; pwd`;
 
 MAVEN_URL="http://mirror.bit.edu.cn/apache/maven/maven-3/3.5.2/binaries/apache-maven-3.5.2-bin.tar.gz";
 
@@ -59,51 +171,18 @@ MAVEN_NAME="apache-maven-3.5.2-bin"
 
 UNPKG_MAVEN_NAME="apache-maven-3.5.2";
 
-OPENCRON_VERSION="1.2.0-RELEASE";
+OPENCRON_VERSION="1.1.0-RELEASE";
 
-BUILD_HOME=${WORKDIR}/build
+MAVEN_PATH="/tmp";
 
-[ ! -d ${BUILD_HOME} ] && mkdir ${BUILD_HOME}
+[ ! -d "$MAVEN_PATH" ] && mkdir $MAVEN_PATH;
 
-[ ! -d ${BUILD_HOME}/dist ] && mkdir ${BUILD_HOME}/dist/
-rm -rf ${BUILD_HOME}/dist/*
-
-echo_r () {
-    # Color red: Error, Failed
-    [ $# -ne 1 ] && return 1
-    echo -e "[${GREEN_COLOR}opencron${RES}] ${RED_COLOR}$1${RES}"
-}
-
-echo_g () {
-    # Color green: Success
-    [ $# -ne 1 ] && return 1
-    echo -e "[${GREEN_COLOR}opencron${RES}] ${GREEN_COLOR}$1${RES}"
-}
-
-echo_y () {
-    # Color yellow: Warning
-    [ $# -ne 1 ] && return 1
-    echo -e "[${GREEN_COLOR}opencron${RES}] ${YELLOW_COLOR}$1${RES}"
-}
-
-echo_w () {
-    # Color yellow: White
-    [ $# -ne 1 ] && return 1
-    echo -e "[${GREEN_COLOR}opencron${RES}] ${WHITE_COLOR}$1${RES}"
-}
+DIST_HOME="${WORKDIR}/dist"
 
 USER="`id -un`"
 LOGNAME="$USER"
 if [ $UID -ne 0 ]; then
     echo_y "WARNING: Running as a non-root user, \"$LOGNAME\". Functionality may be unavailable. Only root can use some commands or options"
-fi
-
-#check java exists.
-java >/dev/null 2>&1
-
-if [ $? -ne 1 ];then
-  echo_r "ERROR: java is not install,please install java first!"
-  exit 1;
 fi
 
 #check maven exists
@@ -113,9 +192,9 @@ if [ $? -ne 1 ]; then
 
     echo_y "WARNING:maven is not install!"
 
-    if [ -x "${BUILD_HOME}/${UNPKG_MAVEN_NAME}" ] ; then
+    if [ -x "/tmp/${UNPKG_MAVEN_NAME}" ] ; then
         echo_w "maven is already download,now config setting...";
-        MVN=${BUILD_HOME}/${UNPKG_MAVEN_NAME}/bin/mvn
+        MVN=/tmp/${UNPKG_MAVEN_NAME}/bin/mvn
     else
         echo_w "download maven Starting..."
         echo_w "checking network connectivity ... "
@@ -125,11 +204,11 @@ if [ $? -ne 1 ]; then
         retval=$?
         if [ ${retval} -eq 0 ] ; then
             echo_w "network is connectioned,download maven Starting... "
-            wget -P ${BUILD_HOME} $MAVEN_URL && {
+            wget -P "/tmp" $MAVEN_URL && {
                 echo_g "download maven successful!";
                 echo_w "install maven Starting"
-                tar -xzvf ${BUILD_HOME}/${MAVEN_NAME}.tar.gz -C ${BUILD_HOME}
-                MVN=${BUILD_HOME}/${UNPKG_MAVEN_NAME}/bin/mvn
+                tar -xzvf /tmp/${MAVEN_NAME}.tar.gz -C /tmp
+                MVN=/tmp/${UNPKG_MAVEN_NAME}/bin/mvn
             }
         elif [ ${retval} -ne 0 ]; then
             echo_r "ERROR:network is blocked! download maven failed,please check your network!build error! bye!"
@@ -148,9 +227,10 @@ $MVN clean install -Dmaven.test.skip=true;
 retval=$?
 
 if [ ${retval} -eq 0 ] ; then
-    cp ${WORKDIR}/opencron-agent/target/opencron-agent-${OPENCRON_VERSION}.tar.gz ${BUILD_HOME}/dist/
-    cp ${WORKDIR}/opencron-server/target/opencron-server.war ${BUILD_HOME}/dist/
-    echo -e "[${GREEN_COLOR}opencron${RES}] ${WHITE_COLOR}build opencron @ Version ${BLUE_COLOR}${OPENCRON_VERSION}${RES} successfully! please goto${RES} ${GREEN_COLOR}${BUILD_HOME}/dist${RES}"
+    [ ! -d "${DIST_HOME}" ] && mkdir ${DIST_HOME} || rm -rf  ${DIST_HOME}/* ;
+    cp ${WORKDIR}/opencron-agent/target/opencron-agent-${OPENCRON_VERSION}.tar.gz ${DIST_HOME}
+    cp ${WORKDIR}/opencron-server/target/opencron-server.war ${DIST_HOME}
+    printf "[${BLUE_COLOR}opencron${RES}] ${WHITE_COLOR}build opencron @Version ${OPENCRON_VERSION} successfully! please goto${RES} ${GREEN_COLOR}${DIST_HOME}${RES}\n"
     exit 0
 else
     echo_r "build opencron failed! please try again "
